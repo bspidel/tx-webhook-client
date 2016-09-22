@@ -1,4 +1,3 @@
-
 {
   "name": "tx-webhook-client",
   "description": "Client for Gogs webhooks to request conversion jobs from tX Manager and deploy the results",
