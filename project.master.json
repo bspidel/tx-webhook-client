@@ -1,0 +1,8 @@
+{
+  "name": "tx-webhook-client",
+  "description": "Client for Gogs webhooks to request conversion jobs from tX Manager and deploy the results",
+  "memory": 512,
+  "timeout": 300,
+  "role": "arn:aws:iam::002723143144:role/tx_lambda_function",
+  "environment": {}
+}
