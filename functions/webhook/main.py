@@ -130,11 +130,12 @@ def handle(event, context):
     # 4) Upload zipped file to the S3 bucket (you may want to do some try/catch and give an error if fails back to Gogs)
     print('Uploading {0} to {1}...'.format(zip_filepath, pre_convert_bucket), end=' ')
     s3_client = boto3.client('s3')
-    s3_client.upload_file(zip_filepath, pre_convert_bucket, "tx-webhook-client/"+zip_filename)
+    file_key = "tx-webhook-client/"+zip_filename
+    s3_client.upload_file(zip_filepath, pre_convert_bucket, file_key)
     print('finished.')
 
     # Send job request to tx-manager
-    source_url = 'https://s3-us-west-2.amazonaws.com/'+pre_convert_bucket+'/sample-client/'+zip_filename # we use us-west-2 for our s3 buckets
+    source_url = 'https://s3-us-west-2.amazonaws.com/{0}/{1}'.format(pre_convert_bucket, file_key)  # we use us-west-2 for our s3 buckets
     tx_manager_job_url = api_url+'/tx/job'
     identifier = "{0}/{1}/{2}".format(repo_owner, repo_name, commit_id[:10])  # The way to know which repo/commit goes to this job request
     payload = {
