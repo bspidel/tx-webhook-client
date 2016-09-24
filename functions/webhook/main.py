@@ -130,7 +130,7 @@ def handle(event, context):
     # 4) Upload zipped file to the S3 bucket (you may want to do some try/catch and give an error if fails back to Gogs)
     print('Uploading {0} to {1}...'.format(zip_filepath, pre_convert_bucket), end=' ')
     s3_client = boto3.client('s3')
-    s3_client.upload_file(zip_filepath, pre_convert_bucket, "sample-client/"+zip_filename)
+    s3_client.upload_file(zip_filepath, pre_convert_bucket, "tx-webhook-client/"+zip_filename)
     print('finished.')
 
     # Send job request to tx-manager
@@ -144,7 +144,7 @@ def handle(event, context):
         "input_format": "md",
         "output_format": "html",
         "source": source_url,
-        "callback": api_url+'/tx/client/callback'
+        "callback": api_url+'/client/callback'
     }
     headers = {"content-type": "application/json"}
 
