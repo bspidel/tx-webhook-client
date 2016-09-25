@@ -28,8 +28,9 @@ def handle(event, context):
         raise Exception('"data" not in payload')
     data = event['data']
 
+    env_vars = {}
     if 'vars' in event and isinstance(event['vars'], dict):
-        data.update(event['vars'])
+        env_vars = event['vars']
 
     commit_id = data['after']
     commit = None
@@ -43,10 +44,11 @@ def handle(event, context):
     if 'https://git.door43.org/' not in commit_url and 'http://test.door43.org:3000/' not in commit_url:
         raise Exception('Currently only git.door43.org repositories are supported.')
 
-    pre_convert_bucket = data['pre_convert_bucket']
-    cdn_bucket = data['cdn_bucket']
-    gogs_user_token = data['gogs_user_token']
-    api_url = data['api_url']
+    pre_convert_bucket = env_vars['pre_convert_bucket']
+    cdn_bucket = env_vars['cdn_bucket']
+    gogs_user_token = env_vars['gogs_user_token']
+    api_url = env_vars['api_url']
+
     repo_name = data['repository']['name']
     repo_owner = data['repository']['owner']['username']
     compare_url = data['compare_url']
