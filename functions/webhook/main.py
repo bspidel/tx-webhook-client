@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
-# Sample webhook client for receiving a payload from Gogs to process the job. This currently works with
-# an English OBS repo
+#
+# Webhook client for receiving a payload from Gogs to process the job
+#
 
 from __future__ import print_function
 
@@ -84,49 +85,67 @@ def handle(event, context):
         print('finished.')
 
     # 2) Massage the content to just be a directory of MD files in alphabetical order as they should be compiled together in the converter
+    resource_type = None
+    input_format = None
+    source_dir = os.path.join(repo_dir, repo_name, 'content')
+    output_dir = tempfile.mktemp(prefix='files_')
     manifest_filepath = os.path.join(repo_dir, repo_name, 'manifest.json')
     # Get info from manifest.json if there is one
     if os.path.isfile(manifest_filepath):
         with open(manifest_filepath) as f:
             manifest = json.load(f)
-            if 'format' in manifest:
-                input_format = manifest['format']
-                # Handle USFM files
-                if input_format == 'usfm':
-                    book = manifest['project']['id']
-                    title = manifest['project']['name']
-                    resource = manifest['resource']['id']
-                    resource = manifest['resource']['name']
-                    title_filepath = os.path.join(repo_dir, '00', 'title')
-                    if os.path.isfile(title_filepath):
-                        with open(title_filepath) as title_file:
-                            title = title_file.read()
+            if 'resource' in manifest and 'id' in manifest['resource']:
+                resource_type = 'bible'
+            elif 'source_translations' in manifest and 'resource_slug' in manifest['source_translations'][0]:
+                resource_type = manifest['status'][0]['resource_slug']
+            elif 'status' in manifest and 'source_translations' in manifest['status'] and 'resource_slug' in manifest['status']['source_translations'][0]:
+                resource_type = manifest['status']['source_translations'][0]['resource_slug']
+    if not resource_type:
+        if '-' in repo_name:
+            resource_type = repo_name.split('-')[:-1]
+        elif '_' in repo_name:
+            resource_type = repo_name.split('_')[:-1]
+        else:
+            resource_type = repo_name
 
-                    usfm_filepath = os.path.join(tempfile.gettempdir(), '{0}-{1}.usfm'.format(resource, book))
-                    # Get title from file if there is one
-                    with open(usfm_filepath, 'w') as usfm_file:
-                        pass
-                        # Todo: Write more for USFMS to make one big USFM file
+    if resource_type == 'ulb' or resource_type == 'udb':
+        resource_type = 'bible'
 
-    content_dir = os.path.join(repo_dir, repo_name, 'content')
-    md_files = glob(os.path.join(content_dir, '*.md'))
-    massaged_files_dir = tempfile.mktemp(prefix='files_')
-    make_dir(massaged_files_dir)
-    print('Massaging content from {0} to {1}...'.format(content_dir, massaged_files_dir), end=' ')
-    for md_file in md_files:
-        copyfile(md_file, os.path.join(massaged_files_dir, os.path.basename(md_file)))
-    # want front matter to be before 01.md and back matter to be after 50.md
-    copyfile(os.path.join(content_dir, '_front', 'front-matter.md'), os.path.join(massaged_files_dir, 'front-matter.md'))
-    copyfile(os.path.join(content_dir, '_back', 'back-matter.md'), os.path.join(massaged_files_dir, 'back-matter.md'))
-    print('finished.')
+    # Handle Bible files
+    if resource_type == 'bible':
+        input_format = "usfm"
+        files = glob(os.path.join(source_dir, '*.usfm'))
+        make_dir(output_dir)
+        print('Massaging content from {0} to {1}...'.format(source_dir, output_dir), end=' ')
+        for filename in files:
+            copyfile(filename, os.path.join(output_dir, os.path.basename(filename)))
+        print('finished.')
+    # Handle OBS files
+    elif resource_type == 'obs':
+        input_format = "md"
+        source_dir = os.path.join(repo_dir, repo_name, 'content')
+        files = glob(os.path.join(source_dir, '*.md'))
+        output_dir = tempfile.mktemp(prefix='files_')
+        make_dir(output_dir)
+        print('Massaging content from {0} to {1}...'.format(source_dir, output_dir), end=' ')
+        for filename in files:
+            copyfile(filename, os.path.join(output_dir, os.path.basename(filename)))
+        # Copy over front and back matter
+        copyfile(os.path.join(source_dir, '_front', 'front-matter.md'),
+                 os.path.join(output_dir, 'front-matter.md'))
+        copyfile(os.path.join(source_dir, '_back', 'back-matter.md'),
+                 os.path.join(output_dir, 'back-matter.md'))
+        print('finished.')
+    else:
+        raise Exception("Bad Request: No resource type could be determined for repository {0}/{1}.".format(repo_owner, repo_name))
 
     # 3) Zip up the massaged files
     zip_filename = context.aws_request_id+'.zip' # context.aws_request_id is a unique ID for this lambda call, so using it to not conflict with other requests
     zip_filepath = os.path.join(tempfile.gettempdir(), zip_filename)
-    md_files = glob(os.path.join(massaged_files_dir, '*.md'))
-    print('Zipping files from {0} to {1}...'.format(massaged_files_dir, zip_filepath), end=' ')
-    for md_file in md_files:
-        add_file_to_zip(zip_filepath, md_file, os.path.basename(md_file))
+    files = glob(os.path.join(output_dir, '*'))
+    print('Zipping files from {0} to {1}...'.format(output_dir, zip_filepath), end=' ')
+    for filename in files:
+        add_file_to_zip(zip_filepath, filename, os.path.basename(filename))
     print('finished.')
 
     # 4) Upload zipped file to the S3 bucket (you may want to do some try/catch and give an error if fails back to Gogs)
@@ -143,8 +162,8 @@ def handle(event, context):
     payload = {
         "identifier": identifier,
         "user_token": gogs_user_token,
-        "resource_type": "obs",
-        "input_format": "md",
+        "resource_type": resource_type,
+        "input_format": input_format,
         "output_format": "html",
         "source": source_url,
         "callback": api_url+'/client/callback'
@@ -183,8 +202,11 @@ def handle(event, context):
         'commit_url': commit_url,
         'compare_url': compare_url,
         'commit_message': commit_message,
-        'request_timestamp': datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        'eta_timestamp': json_data['job']['eta'],
+        'created_at': datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        'eta': json_data['job']['eta'],
+        'resource_type': resource_type,
+        'input_format': input_format,
+        'output_format': 'html',
         'success': None,
         'status': 'started',
         'message': 'Conversion in progress...'
