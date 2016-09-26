@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
-# Sample webhook client for receiving a payload from Gogs to process the job. This currently works with
-# an English OBS repo
+#
+# Webhook client for receiving a payload from Gogs to process the job
+#
 
 from __future__ import print_function
 
@@ -28,8 +29,9 @@ def handle(event, context):
         raise Exception('"data" not in payload')
     data = event['data']
 
+    env_vars = {}
     if 'vars' in event and isinstance(event['vars'], dict):
-        data.update(event['vars'])
+        env_vars = event['vars']
 
     commit_id = data['after']
     commit = None
@@ -43,10 +45,11 @@ def handle(event, context):
     if 'https://git.door43.org/' not in commit_url and 'http://test.door43.org:3000/' not in commit_url:
         raise Exception('Currently only git.door43.org repositories are supported.')
 
-    pre_convert_bucket = data['pre_convert_bucket']
-    cdn_bucket = data['cdn_bucket']
-    gogs_user_token = data['gogs_user_token']
-    api_url = data['api_url']
+    pre_convert_bucket = env_vars['pre_convert_bucket']
+    cdn_bucket = env_vars['cdn_bucket']
+    gogs_user_token = env_vars['gogs_user_token']
+    api_url = env_vars['api_url']
+
     repo_name = data['repository']['name']
     repo_owner = data['repository']['owner']['username']
     compare_url = data['compare_url']
@@ -82,70 +85,90 @@ def handle(event, context):
         print('finished.')
 
     # 2) Massage the content to just be a directory of MD files in alphabetical order as they should be compiled together in the converter
+    resource_type = None
+    input_format = None
+    source_dir = os.path.join(repo_dir, repo_name, 'content')
+    output_dir = tempfile.mktemp(prefix='files_')
     manifest_filepath = os.path.join(repo_dir, repo_name, 'manifest.json')
     # Get info from manifest.json if there is one
     if os.path.isfile(manifest_filepath):
         with open(manifest_filepath) as f:
             manifest = json.load(f)
-            if 'format' in manifest:
-                input_format = manifest['format']
-                # Handle USFM files
-                if input_format == 'usfm':
-                    book = manifest['project']['id']
-                    title = manifest['project']['name']
-                    resource = manifest['resource']['id']
-                    resource = manifest['resource']['name']
-                    title_filepath = os.path.join(repo_dir, '00', 'title')
-                    if os.path.isfile(title_filepath):
-                        with open(title_filepath) as title_file:
-                            title = title_file.read()
+            if 'resource' in manifest and 'id' in manifest['resource']:
+                resource_type = 'bible'
+            elif 'source_translations' in manifest and 'resource_slug' in manifest['source_translations'][0]:
+                resource_type = manifest['status'][0]['resource_slug']
+            elif 'status' in manifest and 'source_translations' in manifest['status'] and 'resource_slug' in manifest['status']['source_translations'][0]:
+                resource_type = manifest['status']['source_translations'][0]['resource_slug']
+    if not resource_type:
+        if '-' in repo_name:
+            resource_type = repo_name.split('-')[:-1]
+        elif '_' in repo_name:
+            resource_type = repo_name.split('_')[:-1]
+        else:
+            resource_type = repo_name
 
-                    usfm_filepath = os.path.join(tempfile.gettempdir(), '{0}-{1}.usfm'.format(resource, book))
-                    # Get title from file if there is one
-                    with open(usfm_filepath, 'w') as usfm_file:
-                        pass
-                        # Todo: Write more for USFMS to make one big USFM file
+    if resource_type == 'ulb' or resource_type == 'udb':
+        resource_type = 'bible'
 
-    content_dir = os.path.join(repo_dir, repo_name, 'content')
-    md_files = glob(os.path.join(content_dir, '*.md'))
-    massaged_files_dir = tempfile.mktemp(prefix='files_')
-    make_dir(massaged_files_dir)
-    print('Massaging content from {0} to {1}...'.format(content_dir, massaged_files_dir), end=' ')
-    for md_file in md_files:
-        copyfile(md_file, os.path.join(massaged_files_dir, os.path.basename(md_file)))
-    # want front matter to be before 01.md and back matter to be after 50.md
-    copyfile(os.path.join(content_dir, '_front', 'front-matter.md'), os.path.join(massaged_files_dir, '00_front-matter.md'))
-    copyfile(os.path.join(content_dir, '_back', 'back-matter.md'), os.path.join(massaged_files_dir, '51_back-matter.md'))
-    print('finished.')
+    # Handle Bible files
+    if resource_type == 'bible':
+        input_format = "usfm"
+        files = glob(os.path.join(source_dir, '*.usfm'))
+        make_dir(output_dir)
+        print('Massaging content from {0} to {1}...'.format(source_dir, output_dir), end=' ')
+        for filename in files:
+            copyfile(filename, os.path.join(output_dir, os.path.basename(filename)))
+        print('finished.')
+    # Handle OBS files
+    elif resource_type == 'obs':
+        input_format = "md"
+        source_dir = os.path.join(repo_dir, repo_name, 'content')
+        files = glob(os.path.join(source_dir, '*.md'))
+        output_dir = tempfile.mktemp(prefix='files_')
+        make_dir(output_dir)
+        print('Massaging content from {0} to {1}...'.format(source_dir, output_dir), end=' ')
+        for filename in files:
+            copyfile(filename, os.path.join(output_dir, os.path.basename(filename)))
+        # Copy over front and back matter
+        copyfile(os.path.join(source_dir, '_front', 'front-matter.md'),
+                 os.path.join(output_dir, 'front-matter.md'))
+        copyfile(os.path.join(source_dir, '_back', 'back-matter.md'),
+                 os.path.join(output_dir, 'back-matter.md'))
+        print('finished.')
+    else:
+        raise Exception("Bad Request: No resource type could be determined for repository {0}/{1}.".format(repo_owner, repo_name))
 
     # 3) Zip up the massaged files
     zip_filename = context.aws_request_id+'.zip' # context.aws_request_id is a unique ID for this lambda call, so using it to not conflict with other requests
     zip_filepath = os.path.join(tempfile.gettempdir(), zip_filename)
-    md_files = glob(os.path.join(massaged_files_dir, '*.md'))
-    print('Zipping files from {0} to {1}...'.format(massaged_files_dir, zip_filepath), end=' ')
-    for md_file in md_files:
-        add_file_to_zip(zip_filepath, md_file, os.path.basename(md_file))
+    files = glob(os.path.join(output_dir, '*'))
+    print('Zipping files from {0} to {1}...'.format(output_dir, zip_filepath), end=' ')
+    for filename in files:
+        add_file_to_zip(zip_filepath, filename, os.path.basename(filename))
+    if os.path.isfile(manifest_filepath):
+        add_file_to_zip(zip_filepath, manifest_filepath, os.path.basename(manifest_filepath))
     print('finished.')
 
     # 4) Upload zipped file to the S3 bucket (you may want to do some try/catch and give an error if fails back to Gogs)
     print('Uploading {0} to {1}...'.format(zip_filepath, pre_convert_bucket), end=' ')
     s3_client = boto3.client('s3')
-    s3_client.upload_file(zip_filepath, pre_convert_bucket, "sample-client/"+zip_filename)
+    file_key = "tx-webhook-client/"+zip_filename
+    s3_client.upload_file(zip_filepath, pre_convert_bucket, file_key)
     print('finished.')
 
     # Send job request to tx-manager
-    source_url = 'https://s3-us-west-2.amazonaws.com/'+pre_convert_bucket+'/sample-client/'+zip_filename # we use us-west-2 for our s3 buckets
+    source_url = 'https://s3-us-west-2.amazonaws.com/{0}/{1}'.format(pre_convert_bucket, file_key)  # we use us-west-2 for our s3 buckets
     tx_manager_job_url = api_url+'/tx/job'
     identifier = "{0}/{1}/{2}".format(repo_owner, repo_name, commit_id[:10])  # The way to know which repo/commit goes to this job request
     payload = {
         "identifier": identifier,
         "user_token": gogs_user_token,
-        "username": pusher_username,
-        "resource_type": "obs",
-        "input_format": "md",
+        "resource_type": resource_type,
+        "input_format": input_format,
         "output_format": "html",
         "source": source_url,
-        "callback": api_url+'/tx/client/callback'
+        "callback": api_url+'/client/callback'
     }
     headers = {"content-type": "application/json"}
 
@@ -158,9 +181,19 @@ def handle(event, context):
     # for testing
     print('tx-manager response:')
     print(response)
+
+    if not response:
+        raise Exception('Bad request: unable to convert')
+
+    if 'errorMessage' in response:
+        raise Exception('Bad request: '.format(response['errorMessage']))
+
     json_data = json.loads(response.text)
     print("json:")
     print(json_data)
+
+    if 'job' not in json_data:
+        raise Exception('Bad request: Did not receive a response from the tX Manager')
 
     build_log_json = {
         'job_id': json_data['job']['job_id'],
@@ -171,8 +204,11 @@ def handle(event, context):
         'commit_url': commit_url,
         'compare_url': compare_url,
         'commit_message': commit_message,
-        'request_timestamp': datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        'eta_timestamp': json_data['job']['eta'],
+        'created_at': datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        'eta': json_data['job']['eta'],
+        'resource_type': resource_type,
+        'input_format': input_format,
+        'output_format': 'html',
         'success': None,
         'status': 'started',
         'message': 'Conversion in progress...'
@@ -185,25 +221,25 @@ def handle(event, context):
     # Upload files to S3:
 
     # S3 location vars
-    s3_project_key = 'u/{0}'.format(identifier)
+    s3_commit_key = 'u/{0}'.format(identifier)
     s3_resource = boto3.resource('s3')
     bucket = s3_resource.Bucket(cdn_bucket)
 
-    # Remove everything in the bucket with the s3_project_key prefix so old files are removed, if any
-    for obj in bucket.objects.filter(Prefix=s3_project_key):
+    # Remove everything in the bucket with the s3_commit_key prefix so old files are removed, if any
+    for obj in bucket.objects.filter(Prefix=s3_commit_key):
         s3_resource.Object(bucket.name, obj.key).delete()
 
     # Make a build_log.json file with this repo and commit data for later processing, upload to S3
     build_log_file = os.path.join(tempfile.gettempdir(), 'build_log_request.json')
     write_file(build_log_file, build_log_json)
-    bucket.upload_file(build_log_file, s3_project_key+'/build_log.json', ExtraArgs={'ContentType': 'application/json', 'CacheControl': str('public, max-age=5')})
-    print('Uploaded the following content from {0} to {1}/build_log.json'.format(build_log_file, s3_project_key))
+    bucket.upload_file(build_log_file, s3_commit_key+'/build_log.json', ExtraArgs={'ContentType': 'application/json', 'CacheControl': 'max-age=0'})
+    print('Uploaded the following content from {0} to {1}/build_log.json'.format(build_log_file, s3_commit_key))
     print(build_log_json)
 
     # Upload the manifest.json file to the cdn_bucket if it exists
     if os.path.isfile(manifest_filepath):
-        bucket.upload_file(manifest_filepath, s3_project_key+'/manifest.json', ExtraArgs={'ContentType': 'application/json', 'CacheControl': str('public, max-age=5')})
-        print('Uploaded the manifest.json file to {0}/manifest.json'.format(s3_project_key))
+        bucket.upload_file(manifest_filepath, s3_commit_key+'/manifest.json', ExtraArgs={'ContentType': 'application/json', 'CacheControl': 'max-age=0'})
+        print('Uploaded the manifest.json file to {0}/manifest.json'.format(s3_commit_key))
 
     # If there was an error, in order to trigger a 400 error in the API Gateway, we need to raise an
     # exception with the returned 'errorMessage' because the API Gateway needs to see 'Bad Request:' in the string
