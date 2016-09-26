@@ -116,8 +116,8 @@ def handle(event, context):
     for md_file in md_files:
         copyfile(md_file, os.path.join(massaged_files_dir, os.path.basename(md_file)))
     # want front matter to be before 01.md and back matter to be after 50.md
-    copyfile(os.path.join(content_dir, '_front', 'front-matter.md'), os.path.join(massaged_files_dir, '00_front-matter.md'))
-    copyfile(os.path.join(content_dir, '_back', 'back-matter.md'), os.path.join(massaged_files_dir, '51_back-matter.md'))
+    copyfile(os.path.join(content_dir, '_front', 'front-matter.md'), os.path.join(massaged_files_dir, 'front-matter.md'))
+    copyfile(os.path.join(content_dir, '_back', 'back-matter.md'), os.path.join(massaged_files_dir, 'back-matter.md'))
     print('finished.')
 
     # 3) Zip up the massaged files

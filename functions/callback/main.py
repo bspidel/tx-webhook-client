@@ -11,7 +11,6 @@ import requests
 
 # Functions from Python libraries
 from mimetypes import MimeTypes
-from datetime import datetime
 
 # Functions from unfoldingWord libraries
 from general_tools.file_utils import unzip, write_file
