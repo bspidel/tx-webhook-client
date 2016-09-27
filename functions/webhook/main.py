@@ -264,12 +264,9 @@ def handle(event, context):
 
 def myLog( level, msg): # very simple local debug
     sw = {
-      "debug"   : 6,
-      "loops"   : 5,
-      "detail"  : 4,
-      "info"    : 3,
-      "warning" : 2,
-      "error"   : 1
+      "debug"   : 6,      "loops"   : 5,
+      "detail"  : 4,      "info"    : 3,
+      "warning" : 2,      "error"   : 1
     }
 
     l = sw.get( level, 5 )
@@ -277,8 +274,69 @@ def myLog( level, msg): # very simple local debug
     if l <= debugLevel:
         print( ( "  " * l ) + level + " " + " " * ( 7 - len( level )) + msg )
 
+
 def ifCopy( frm, too ):
   # copy frm to too if frm exists
 
     if os.path.exists( frm ):
         copyfile( frm, too )
+
+
+def flatten(dir, mfd):
+    # pull chunks up to chapter level
+    # dir is like: /tmp/input/<user>/<repo>/
+    # content is under dir [<chapter>]<chunk>.[md|txt]
+    myLog('info', "flatten: " + dir + " mfd: " + mfd)
+    os.chdir(dir)
+    content = os.path.join(dir, "content")
+
+    if os.path.exists(content):
+        os.chdir(content)
+
+    mdFiles = glob('*/*.md')
+    make_dir(mfd)
+    print("mdFiles")
+    print(mdFiles)
+    fileCount = 0
+
+    for mdFile in mdFiles:
+        newFile = mdFile.replace('/', '-')
+        os.rename(mdFile, os.path.join(mfd, newFile))
+        myLog("debug", "mdFile: " + mdFile + " newFile: " + newFile)
+        fileCount += 1
+
+    myLog("info", "mdFiles: " + str(fileCount))
+    # want front matter to be before 01.md and back matter to be after 50.md
+    ifCopy(os.path.join(dir, '_front', 'front-matter.md'),
+           os.path.join(mfd, '00_front-matter.md'))
+    ifCopy(os.path.join(dir, '_back', 'back-matter.md'),
+           os.path.join(mfd, '51_back-matter.md'))
+
+
+def mv_md(dir):
+    # change txt files from dir to have .md extensions
+    myLog('info', "mv_md dir: " + dir)
+
+    for root, dirs, files in os.walk(dir):
+        myLog("detail", "root: " + root)
+        c = 1
+
+        if debugLevel > 5:
+            for nme in files:
+                srcPath = join(root, nme)
+                myLog("debug", "srcPath: " + srcPath)
+
+        for nme in files:
+            srcPath = join(root, nme)
+            myLog("details", "srcPath: " + srcPath)
+
+            if srcPath.find(".txt") > -1:
+                dst = srcPath[:srcPath.rfind('.')]
+                myLog("debug", "dst:     " + dst + '.md')
+                os.rename(srcPath, dst + '.md')
+
+        if debugLevel > 5:
+            for nme in files:
+                srcPath = join(root, nme)
+                myLog("debug", "srcPath: " + srcPath)
+
