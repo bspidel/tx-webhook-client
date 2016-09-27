@@ -22,6 +22,7 @@ from datetime import datetime
 from general_tools.file_utils import unzip, add_file_to_zip, make_dir, write_file
 from general_tools.url_utils import download_file
 
+MAXJSON    = 10000
 debugLevel = 6
 
 def handle(event, context):
