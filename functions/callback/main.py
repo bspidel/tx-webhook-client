@@ -16,6 +16,7 @@ from mimetypes import MimeTypes
 from general_tools.file_utils import unzip, write_file
 from general_tools.url_utils import download_file, get_url
 
+AWS_REGION = "us-east-1"
 
 def handle(event, context):
     # Getting data from payload which is the JSON that was sent from tx-manager
