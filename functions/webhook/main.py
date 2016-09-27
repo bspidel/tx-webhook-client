@@ -22,10 +22,13 @@ from datetime import datetime
 from general_tools.file_utils import unzip, add_file_to_zip, make_dir, write_file
 from general_tools.url_utils import download_file
 
+AWS_REGION = "us-east-1"
 MAXJSON    = 10000
 debugLevel = 6
 
 def handle(event, context):
+    myLog( "info", "Enter Handle")
+
     # Getting data from payload which is the JSON that was sent from tx-manager
     if 'data' not in event:
         raise Exception('"data" not in payload')
@@ -95,6 +98,198 @@ def handle(event, context):
         unzip(repo_zip_file, repo_dir)
     finally:
         print('finished.')
+
+    # bms #2 rich #2 follows
+    # try: # Find doctype in template then process per template
+    if True:
+        isFound = False
+        myLog("info", "looking for docType: " + docType)
+
+        for item in templates['templates']:
+            myLog("detail", "trying: " + item['doctype'])
+
+            if item['doctype'] == docType:
+                myLog("detail", "found: " + item['doctype'])
+
+                try:  # Apply qualifying tests
+                    for test in item['tests']:
+                        myLog("info", test)
+                        # invoke test
+                except:
+                    myLog("warning", "  Cannot apply tests.")
+
+                # try: # apply transforms from template
+                if True:
+                    fmt = manifest['type']['id']
+
+                    for trans in item['transforms']:
+                        frm = trans['from']
+                        myLog("info", "fmt: " + fmt + " frm: " + frm)
+
+                        if fmt == frm:
+                            if item['agent'] == 'local':  # not using tx use files as is
+                                myLog("detail", "  tool: " + trans['tool'])
+                                myLog("detail", "  orgDir: " + orgDir + " current: " + os.getcwd())
+                                os.chdir(orgDir)
+                                myLog("info", "pwd: " + os.getcwd())
+                                tool = "converters/" + trans['tool']
+                                source = trans['to']
+                                myLog("info", "to: " + trans['to'])
+                                src = workDir + repoName
+                                tgt = outDir + dest + source
+                                cmd = " -s " + src + " -d " + tgt
+                                myLog("info", "cmd: " + tool + " " + cmd)
+
+                                # try:
+                                if True:
+                                    res = subprocess.check_output(
+                                        ["python", tool, "-s", src, "-d", tgt],
+                                        stderr=subprocess.STDOUT,
+                                        shell=False)
+                                    myLog("loops", 'tool result: ' + res)
+                            else:
+                                fun = trans['function']
+
+                                if fun == 'flatten':
+                                    tmpFileDir = tempfile.mktemp(prefix='files_')
+                                    flatten(os.path.join(inDir, repoName), tmpFileDir)
+
+                                    if trans['to'] == 'html':
+                                        if trans['tool'] == 'tx':
+                                            # txResp = myTx( awsid, tmpFileDir, preConvertBucket, pusher, api_url, payload )
+                                            #     def myTx( aswid, massagedFilesDir, preConvertBucket, authorUsername, api_url, data ):
+                                            # Zip up the massaged files
+                                            zipFilename = awsid + '.zip'  # context.aws_request_id is a unique ID
+                                            # for this lambda call, so using it to not conflict with other requests
+                                            zipFile = os.path.join(tempfile.gettempdir(), zipFilename)
+                                            myLog("info", "zipFile: " + zipFile)
+                                            mdFiles = glob(os.path.join(tmpFileDir, '*.md'))
+                                            print('Zipping files from {0} to {1}...'.format(tmpFileDir, zipFile),
+                                                  end=' ')
+                                            fileCount = 0
+
+                                            for mdFile in mdFiles:
+                                                add_file_to_zip(zipFile, mdFile, os.path.basename(mdFile))
+                                                fileCount += 1
+
+                                            print('finished zipping: ' + str(fileCount) + " files.")
+
+                                            # 4) Upload zipped file to the S3 bucket (you may want to do some try/catch
+                                            #    and give an error if fails back to Gogs)
+                                            print('Uploading {0} to {1} in {2}...'.format(zipFile, preConvertBucket,
+                                                                                          zipFilename), end=' ')
+                                            s3Client = boto3.client('s3')
+                                            s3Client.upload_file(zipFile, preConvertBucket, zipFilename)
+                                            print('finished upload.')
+                                            # Send job request to tx-manager
+                                            sourceUrl = 'https://s3-us-west-2.amazonaws.com/' + preConvertBucket + '/' + zipFilename  # we use us-west-2 for our s3 buckets
+                                            txManagerJobUrl = api_url + '/tx/job'
+                                            gogsUserToken = payload['secret']
+
+                                            txPayload = {
+                                                "user_token": gogsUserToken,
+                                                "username": pusher,
+                                                "resource_type": "obs",
+                                                "input_format": "md",
+                                                "output_format": "html",
+                                                "source": sourceUrl,
+                                            }
+
+                                            headers = {"content-type": "application/json"}
+                                            print('Making request to tx-Manager URL {0} with payload:'.format(
+                                                txManagerJobUrl))
+                                            print(txPayload)
+                                            response = requests.post(txManagerJobUrl, json=txPayload, headers=headers)
+                                            print('finished tx-manager request.')
+
+                                            # for testing
+                                            print('tx-manager response:', end=" ")
+                                            print(response)
+                                            jsonData = json.loads(response.text)
+                                            print('jsonData', end=" ")
+                                            print(jsonData)
+                                            # If there was an error, in order to trigger a 400 error in the API Gateway, we need to raise an
+                                            # exception with the returned 'errorMessage' because the API Gateway needs to see 'Bad Request:' in the string
+                                            if 'errorMessage' in jsonData:
+                                                raise Exception(jsonData['errorMessage'])
+
+                                            # Unzip ZIP file into the door43Bucket
+                                            convertedZipUrl = jsonData['job']['output']
+                                            convertedZipFile = os.path.join(tempfile.gettempdir(),
+                                                                            convertedZipUrl.rpartition('/')[2])
+                                            # ========================================
+
+                                            try:
+                                                print('Downloading converted file from: {0} to: {1} ...'.format(
+                                                    convertedZipUrl, convertedZipFile), end=' ')
+                                                download_file(convertedZipUrl, convertedZipFile)
+                                            finally:
+                                                print('finished download.')
+
+                                                # Unzip the archive
+                                            door43Dir = tempfile.mkdtemp(prefix='door43_')
+
+                                            if True:
+                                                # if os.path.exists( convertedZipFile ):
+                                                try:
+                                                    print('Unzipping {0}...'.format(convertedZipFile), end=' ')
+                                                    unzip(convertedZipFile, door43Dir)
+                                                finally:
+                                                    print('finished unzip.')
+                                                usr = 'u/' + payload['repository']['owner']['username']
+                                                s3ProjectKey = os.path.join(usr, repoName, hash)
+                                                print("s3ProjectKey: " + s3ProjectKey)
+                                            else:
+                                                print('Nothing downloaded')
+
+                                            # Delete existing files in door43.org for this Project Key
+                                            s3Resource = boto3.resource('s3')
+                                            s3Bucket = s3Resource.Bucket(door43Bucket)
+
+                                            for obj in s3Bucket.objects.filter(Prefix=s3ProjectKey):
+                                                s3Resource.Object(s3Bucket.name, obj.key).delete()
+
+                                                ## Upload all files to the door43 bucket with the key of <user>/<repo_name>/<commit> of the repo
+                                                # for root, dirs, files in os.walk(door43Dir):
+                                                #    for file in files:
+                                                #        path = os.path.join(root, file)
+                                                #        key = s3ProjectKey + path.replace(door43Dir, '')
+                                                #        s3Client.upload_file(os.path.join(root, file), door43Bucket, key)
+
+                                                # Make a manifest.json file with this repo and commit data for later processing
+                                                # manifestFile = os.path.join(tempfile.gettempdir(), 'manifest.json')
+                                                # write_file(manifestFile, json.dumps(data))
+                                                # s3Client.upload_file(manifestFile, door43Bucket, s3ProjectKey+'/manifest.json')
+
+                                                # Delete the zip files we made above (when we convert to using callbacks, this should be done in the callback)
+                                                # Rich: commented out so we can see the file for testing
+                                                ##s3Resource.Object(preConvertBucket, zipFilename).delete()
+
+                                                # return something to Gogs response for the webhook. Right now we will just returning the tx-manager response
+                                                # return( jsonData )
+
+                                if fun == 'mv_md':
+                                    mv_md(inDir)
+                                    fmt = 'md'
+
+                                    # except( OSError, e ):
+                                    #    myLog( "warning", "Cannot run tool: " + tool + " " + \
+                                    #        cmd + ". Error: " + e.strerror )
+                # except:
+                #    myLog( "warning", "  Cannot apply transforms" )
+
+                isFound = True
+                break
+
+        if isFound == False:
+            myLog("error", "Cannot find docType: " + docIdx)
+            print("504")
+            sys.exit(4)
+
+    # except:
+    #    myLog( "error", "No support for docType: " + docType )
+    #    print( "505" )
+    #    sys.exit( 5 )
 
     # 2) Massage the content to just be a directory of MD files in alphabetical order as they should be compiled together in the converter
     resource_type = None
