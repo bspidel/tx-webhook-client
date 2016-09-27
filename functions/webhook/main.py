@@ -22,6 +22,7 @@ from datetime import datetime
 from general_tools.file_utils import unzip, add_file_to_zip, make_dir, write_file
 from general_tools.url_utils import download_file
 
+debugLevel = 6
 
 def handle(event, context):
     # Getting data from payload which is the JSON that was sent from tx-manager
@@ -59,6 +60,16 @@ def handle(event, context):
     else:
         pusher = {'username': commit['author']['username']}
     pusher_username = pusher['username']
+
+    try:  # template of things to do based on repo
+        tmp = open("template.json", "r")
+        tmpRaw = tmp.read(MAXJSON)
+        tmp.close()
+        templates = json.loads(tmpRaw)
+        myLog("detail", "templates: " + tmpRaw)
+    except:
+        myLog("error", "Cannot read transform template")
+        return(2)
 
     # The following sections of code will:
     # 1) download and unzip repo files
@@ -247,3 +258,20 @@ def handle(event, context):
         raise Exception(json_data['errorMessage'])
 
     return build_log_json
+
+
+
+def myLog( level, msg): # very simple local debug
+    sw = {
+      "debug"   : 6,
+      "loops"   : 5,
+      "detail"  : 4,
+      "info"    : 3,
+      "warning" : 2,
+      "error"   : 1
+    }
+
+    l = sw.get( level, 5 )
+
+    if l <= debugLevel:
+        print( ( "  " * l ) + level + " " + " " * ( 7 - len( level )) + msg )
