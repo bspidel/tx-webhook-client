@@ -276,3 +276,9 @@ def myLog( level, msg): # very simple local debug
 
     if l <= debugLevel:
         print( ( "  " * l ) + level + " " + " " * ( 7 - len( level )) + msg )
+
+def ifCopy( frm, too ):
+  # copy frm to too if frm exists
+
+    if os.path.exists( frm ):
+        copyfile( frm, too )
