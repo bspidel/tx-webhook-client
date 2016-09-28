@@ -22,7 +22,6 @@ from datetime import datetime
 from general_tools.file_utils import unzip, add_file_to_zip, make_dir, write_file
 from general_tools.url_utils import download_file
 
-AWS_REGION = "us-east-1"
 MAXJSON    = 10000
 debugLevel = 6
 
@@ -98,6 +97,14 @@ def handle(event, context):
         unzip(repo_zip_file, repo_dir)
     finally:
         print('finished.')
+
+
+
+
+    myLog( "info", "should be ok to here" )
+
+
+
 
     # bms #2 rich #2 follows
     # try: # Find doctype in template then process per template
